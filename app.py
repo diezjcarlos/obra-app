@@ -2,40 +2,61 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import io
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
-# Configuración de la página
-st.set_page_config(page_title="Seguimiento de Obra", page_icon="🏗️")
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="Seguimiento de Obra - Fundación Masaveu", page_icon="🏗️")
 
-# 1. Incorporar imagen del logo
-# Asegúrate de tener un archivo llamado 'logo.png' en tu repositorio
+# 1. Incorporar imagen del logo de la empresa
+# El archivo debe llamarse 'logo.png' en tu repositorio de GitHub
 try:
-    st.image("logo.png", width=200)
+    st.image("logo.png", width=250)
 except:
-    st.warning("⚠️ No se encontró el archivo 'logo.png'. Por favor, súbelo al repositorio.")
+    st.info("💡 Nota: Sube un archivo 'logo.png' a GitHub para visualizar el logo aquí.")
 
-st.title("Control de Avance de Obra")
+st.title("Parte de Seguimiento de Obra")
 st.markdown("---")
 
-# 2. Formulario de entrada de datos
+# --- ESTADO DE LA SESIÓN (Para mantener los datos temporalmente) ---
+if "historico" not in st.session_state:
+    st.session_state.historico = pd.DataFrame(columns=["Fecha", "Trabajador", "Tarea", "Estado", "Observaciones"])
+
+# --- FORMULARIO DE ENTRADA ---
 with st.form("formulario_obra"):
     col1, col2 = st.columns(2)
     
     with col1:
-        trabajador = st.text_input("Nombre del Trabajador")
-        fecha = st.date_input("Fecha de envío", date.today())
+        trabajador = st.text_input("Nombre del trabajador:")
+    with col2:
+        fecha_envio = st.date_input("Fecha de envío:", date.today())
     
+    # Desplegable de Tareas
     tareas = [
-        "Trazado y marcado de cajas, tubos y cuadros", "Ejecución rozas en paredes y techos",
-        "Montaje de soportes", "Colocación tubos y conductos", "Tendido de cables",
-        "Identificación y etiquetado", "Conexionado de cables en bornes o regletas",
-        "Instalación y conexionado de mecanismos", "Fijación de carril DIN y mecanismos en cuadro eléctrico",
-        "Cableado interno del cuadro eléctrico", "Configuración de equipos domóticos y/o automáticos",
-        "Conexionado de sensores/actuadores de equipos domóticos/automáticos", "Pruebas de continuidad",
-        "Pruebas de aislamiento", "Verificación de tierras", "Programación del automatismo",
+        "Trazado y marcado de cajas, tubos y cuadros",
+        "Ejecución rozas en paredes y techos",
+        "Montaje de soportes",
+        "Colocación tubos y conductos",
+        "Tendido de cables",
+        "Identificación y etiquetado",
+        "Conexionado de cables en bornes o regletas",
+        "Instalación y conexionado de mecanismos",
+        "Fijación de carril DIN y mecanismos en cuadro eléctrico",
+        "Cableado interno del cuadro eléctrico",
+        "Configuración de equipos domóticos y/o automáticos",
+        "Conexionado de sensores/actuadores de equipos domóticos/automáticos",
+        "Pruebas de continuidad",
+        "Pruebas de aislamiento",
+        "Verificación de tierras",
+        "Programación del automatismo",
         "Pruebas de funcionamiento"
     ]
-    tarea_seleccionada = st.selectbox("Selecciona la tarea:", tareas)
+    tarea_seleccionada = st.selectbox("Seleccione la tarea realizada:", tareas)
     
+    # Desplegable de Estados
     estados = [
         "Avance de la tarea en torno al 25% aprox.",
         "Avance de la tarea en torno al 50% aprox.",
@@ -44,51 +65,90 @@ with st.form("formulario_obra"):
         "Finalizado, pero con errores pendientes de corregir",
         "Finalizado y corregidos los errores"
     ]
-    estado_seleccionado = st.selectbox("Estado de la tarea:", estados)
+    estado_seleccionado = st.selectbox("Estado de avance:", estados)
     
-    comentarios = st.text_area("Observaciones adicionales")
+    observaciones = st.text_area("Observaciones o incidencias:")
     
-    submit_button = st.form_submit_button("Registrar Datos")
+    btn_registrar = st.form_submit_button("Añadir al registro")
 
-# 3. Gestión de datos (Persistencia temporal en sesión)
-if "historico" not in st.session_state:
-    st.session_state.historico = pd.DataFrame(columns=["Fecha", "Trabajador", "Tarea", "Estado", "Observaciones"])
+# Al pulsar "Registrar", añadimos a la tabla actual
+if btn_registrar:
+    if trabajador:
+        nuevo_registro = {
+            "Fecha": fecha_envio.strftime("%d/%m/%Y"),
+            "Trabajador": trabajador,
+            "Tarea": tarea_seleccionada,
+            "Estado": estado_seleccionado,
+            "Observaciones": observaciones
+        }
+        st.session_state.historico = pd.concat([st.session_state.historico, pd.DataFrame([nuevo_registro])], ignore_index=True)
+        st.success("Registro añadido a la tabla temporal.")
+    else:
+        st.error("Por favor, introduce el nombre del trabajador.")
 
-if submit_button:
-    nuevo_registro = {
-        "Fecha": fecha,
-        "Trabajador": trabajador,
-        "Tarea": tarea_seleccionada,
-        "Estado": estado_seleccionado,
-        "Observaciones": comentarios
-    }
-    st.session_state.historico = pd.concat([st.session_state.historico, pd.DataFrame([nuevo_registro])], ignore_index=True)
-    st.success("✅ Registro añadido correctamente.")
+# --- VISUALIZACIÓN Y DESCARGA ---
+st.markdown("### Registros en este informe")
+st.table(st.session_state.historico)
 
-# 4. Visualización de la tabla
-st.subheader("Registros actuales")
-st.dataframe(st.session_state.historico)
-
-# 5. Generación de Excel para descarga
-def to_excel(df):
+# Función para convertir DataFrame a Excel
+def generar_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Seguimiento')
+        df.to_excel(writer, index=False, sheet_name='Seguimiento_Obra')
     return output.getvalue()
 
-excel_data = to_excel(st.session_state.historico)
+if not st.session_state.historico.empty:
+    excel_data = generar_excel(st.session_state.historico)
+    
+    col_down, col_mail = st.columns(2)
+    
+    with col_down:
+        st.download_button(
+            label="💾 Descargar Excel en el móvil",
+            data=excel_data,
+            file_name=f"Parte_Obra_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    
+    with col_mail:
+        if st.button("📧 Enviar por correo a Oficina"):
+            try:
+                # Datos del servidor (Configurar en Streamlit Secrets)
+                smtp_server = "smtp.gmail.com" # Cambiar si usas otro proveedor
+                smtp_port = 587
+                remitente = st.secrets["email_user"]
+                password = st.secrets["email_password"]
+                destinatario = "ana@fundacionmasaveu.com"
 
-st.download_button(
-    label="📥 Descargar Reporte en Excel",
-    data=excel_data,
-    file_name=f"reporte_obra_{date.today()}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+                # Configurar el mensaje
+                msg = MIMEMultipart()
+                msg['From'] = remitente
+                msg['To'] = destinatario
+                msg['Subject'] = f"Nuevo Parte de Obra - {trabajador} - {date.today()}"
+                
+                cuerpo = f"Se ha generado un nuevo informe de obra.\n\nTrabajador: {trabajador}\nFecha: {fecha_envio}"
+                msg.attach(MIMEText(cuerpo, 'plain'))
 
-# 6. Envío por correo (Nota aclaratoria)
+                # Adjuntar el Excel
+                part = MIMEBase('application', "octet-stream")
+                part.set_payload(excel_data)
+                encoders.encode_base64(part)
+                part.add_header('Content-Disposition', f'attachment; filename="Parte_{date.today()}.xlsx"')
+                msg.attach(part)
+
+                # Envío
+                server = smtplib.SMTP(smtp_server, smtp_port)
+                server.starttls()
+                server.login(remitente, password)
+                server.send_message(msg)
+                server.quit()
+
+                st.success(f"Correo enviado correctamente a {destinatario}")
+            except Exception as e:
+                st.error(f"Error al enviar: {e}")
+                st.warning("Asegúrate de que los Secrets 'email_user' y 'email_password' están configurados.")
+else:
+    st.info("La tabla está vacía. Registra una tarea para habilitar la descarga y el envío.")
+
 st.markdown("---")
-st.subheader("Envio a Oficina Central")
-if st.button("📧 Enviar Reporte por Correo"):
-    st.info("Para activar el envío real, debes configurar un servidor SMTP. Actualmente, descarga el Excel y envíalo manualmente.")
-    # Nota: El envío automático requiere configurar secretos (API keys o contraseñas de apps) 
-    # en el panel de Streamlit Cloud por seguridad.
+st.caption("App de seguimiento interno - Fundación Masaveu")
